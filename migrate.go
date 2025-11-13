@@ -320,7 +320,7 @@ func main() {
 				}
 
 				// migrate folder (will use server-side copy when possible)
-				migrateFolderRecursive(ctx, srcService, dstService, tf.Id, "root", dstEmail, logger)
+				migrateFolderRecursive(ctx, srcService, dstService, tf.Id, "root", dstEmail, logger, "root")
 
 				// revoke permission if created
 				if pc != nil && pc.Id != "" {
@@ -335,6 +335,7 @@ func main() {
 		} else {
 			// preserve files structure of ancestors of start folder
 			dstParent := "root"
+			parentPath := "root"
 			if startPath != "" {
 				parts := strings.Split(startPath, "/")
 				if len(parts) > 1 {
@@ -343,13 +344,17 @@ func main() {
 						if p == "" {
 							continue
 						}
-
 						dstParent = dstFindOrCreateFolder(ctx, dstService, p, dstParent, logger)
+						if parentPath == "root" {
+							parentPath = "root/" + p
+						} else {
+							parentPath = parentPath + "/" + p
+						}
 					}
 				}
 			}
 
-			migrateFolderRecursive(ctx, srcService, dstService, startFolderID, dstParent, dstEmail, logger)
+			migrateFolderRecursive(ctx, srcService, dstService, startFolderID, dstParent, dstEmail, logger, parentPath)
 		}
 	}
 
@@ -365,7 +370,7 @@ func main() {
 	logger.Printf("files copied: %d", stats.FilesCopied)
 	logger.Printf("files skipped (native Google formats): %d", stats.FilesSkippedNative)
 	logger.Printf("files failed: %d", stats.FilesFailed)
-	logger.Printf("bytes copied (approx): %d", stats.BytesCopied)
+	logger.Printf("bytes copied (approx): %s", formatBytes(stats.BytesCopied))
 	logger.Printf("time elapsed: %s", elapsed)
 
 	if emailEnabled && dstGmail != nil {
@@ -548,6 +553,21 @@ func getAccountEmail(svc *drive.Service) string {
 		return about.User.EmailAddress
 	}
 	return ""
+}
+
+// formatBytes converts bytes to a human-readable string with appropriate units (KB, MB, GB, TB, PB).
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	units := []string{"KB", "MB", "GB", "TB", "PB"}
+	return fmt.Sprintf("%.2f %s", float64(bytes)/float64(div), units[exp])
 }
 
 func getClient(config *oauth2.Config, tokenFile string) (*http.Client, error) {
@@ -858,7 +878,7 @@ func resolveFolderIDToPath(ctx context.Context, svc *drive.Service, folderID str
 
 func migrateRootFiles(ctx context.Context, src, dst *drive.Service, dstEmail string, logger *log.Logger) {
 	q := "'root' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'"
-	
+
 	if verbose {
 		logger.Printf("listing root files with query: %s", q)
 	}
@@ -894,7 +914,7 @@ func migrateRootFiles(ctx context.Context, src, dst *drive.Service, dstEmail str
 		currentFolder = "root"
 		currentFolderMu.Unlock()
 		logger.Printf("file: %s (id=%s) -> copying to destination root", f.Name, f.Id)
-		
+
 		if dryRun {
 			continue
 		}
@@ -936,7 +956,7 @@ func migrateRootFiles(ctx context.Context, src, dst *drive.Service, dstEmail str
 	}
 }
 
-func migrateFolderRecursive(ctx context.Context, src, dst *drive.Service, srcFolderID, dstParentID string, dstEmail string, logger *log.Logger) {
+func migrateFolderRecursive(ctx context.Context, src, dst *drive.Service, srcFolderID, dstParentID string, dstEmail string, logger *log.Logger, parentPath string) {
 	// List child folders
 	fQ := fmt.Sprintf("'%s' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false", srcFolderID)
 	if verbose {
@@ -980,8 +1000,15 @@ func migrateFolderRecursive(ctx context.Context, src, dst *drive.Service, srcFol
 	}
 
 	name := srcMeta.Name
+	// Build full path for status logging/emails
+	var fullPath string
+	if parentPath == "root" {
+		fullPath = "root/" + name
+	} else {
+		fullPath = parentPath + "/" + name
+	}
 	currentFolderMu.Lock()
-	currentFolder = name
+	currentFolder = fullPath
 	currentFolderMu.Unlock()
 	if slices.Contains(excludes, name) {
 		if verbose {
@@ -1050,7 +1077,7 @@ func migrateFolderRecursive(ctx context.Context, src, dst *drive.Service, srcFol
 
 	// Recurse into subfolders
 	for _, fo := range folders.Files {
-		migrateFolderRecursive(ctx, src, dst, fo.Id, dstFolderID, dstEmail, logger)
+		migrateFolderRecursive(ctx, src, dst, fo.Id, dstFolderID, dstEmail, logger, fullPath)
 	}
 }
 
@@ -1138,8 +1165,8 @@ func startStatusLogger(ctx context.Context, logger *log.Logger, interval time.Du
 				return
 			case <-ticker.C:
 				elapsed := time.Since(stats.Start)
-				logger.Printf("status: elapsed=%s files_total=%d files_copied=%d files_failed=%d bytes_copied=%d",
-					elapsed.Truncate(time.Second), stats.FilesTotal, stats.FilesCopied, stats.FilesFailed, stats.BytesCopied)
+				logger.Printf("status: elapsed=%s files_total=%d files_copied=%d files_failed=%d bytes_copied=%s",
+					elapsed.Truncate(time.Second), stats.FilesTotal, stats.FilesCopied, stats.FilesFailed, formatBytes(stats.BytesCopied))
 			}
 		}
 	}()
@@ -1163,8 +1190,8 @@ func sendProgressEmail(ctx context.Context, gmailSvc *gmail.Service, fromEmail, 
 		remaining = fmt.Sprintf("%d", rem)
 	}
 
-	body := fmt.Sprintf("GDrive migration status report\n\nTime: %s\nElapsed: %s\nFiles completed: %d\nFiles remaining (observed): %s\nFiles failed: %d\nFiles skipped (native): %d\nBytes copied: %d\nCurrent source folder: %s\n\nNote: 'Files remaining' is based on files encountered so far and may be incomplete if the tool is still enumerating folders.\n",
-		time.Now().Format(time.RFC1123), elapsed.Truncate(time.Second), stats.FilesCopied, remaining, stats.FilesFailed, stats.FilesSkippedNative, stats.BytesCopied, cur)
+	body := fmt.Sprintf("GDrive migration status report\n\nTime: %s\nElapsed: %s\nFiles completed: %d\nFiles remaining (observed): %s\nFiles failed: %d\nFiles skipped (native): %d\nBytes copied: %s\nCurrent source folder: %s\n\nNote: 'Files remaining' is based on files encountered so far and may be incomplete if the tool is still enumerating folders.\n",
+		time.Now().Format(time.RFC1123), elapsed.Truncate(time.Second), stats.FilesCopied, remaining, stats.FilesFailed, stats.FilesSkippedNative, formatBytes(stats.BytesCopied), cur)
 
 	var msg gmail.Message
 
@@ -1207,7 +1234,7 @@ func sendProgressEmail(ctx context.Context, gmailSvc *gmail.Service, fromEmail, 
 		emailThreadMu.Lock()
 		if emailThreadID == "" && resp.ThreadId != "" {
 			emailThreadID = resp.ThreadId
-			
+
 			if emailMessageID == "" {
 				if m, ferr := gmailSvc.Users.Messages.Get("me", resp.Id).Format("full").Do(); ferr == nil && m != nil {
 					for _, h := range m.Payload.Headers {
@@ -1259,7 +1286,7 @@ func sendFinalEmail(ctx context.Context, gmailSvc *gmail.Service, fromEmail, toE
 	b.WriteString(fmt.Sprintf("Time: %s\n", time.Now().Format(time.RFC1123)))
 	b.WriteString(fmt.Sprintf("Elapsed: %s\n", elapsed.Truncate(time.Second)))
 	b.WriteString(fmt.Sprintf("Files encountered: %d\n", stats.FilesTotal))
-	
+
 	if dryRun {
 		b.WriteString(fmt.Sprintf("Files planned (dry-run): %d\n", stats.FilesPlanned))
 	}
@@ -1273,12 +1300,12 @@ func sendFinalEmail(ctx context.Context, gmailSvc *gmail.Service, fromEmail, toE
 
 	b.WriteString(fmt.Sprintf("Files failed: %d\n", stats.FilesFailed))
 	b.WriteString(fmt.Sprintf("Files skipped (native): %d\n", stats.FilesSkippedNative))
-	b.WriteString(fmt.Sprintf("Bytes copied: %d\n", stats.BytesCopied))
+	b.WriteString(fmt.Sprintf("Bytes copied: %s\n", formatBytes(stats.BytesCopied)))
 	b.WriteString(fmt.Sprintf("Current source folder: %s\n\n", cur))
 
 	if len(failures) > 0 {
 		b.WriteString("Recent failures (up to 50):\n")
-		
+
 		for _, f := range failures {
 			b.WriteString(fmt.Sprintf("- %s (src_id=%s) error: %s\n", f.SrcName, f.SrcID, f.LastError))
 		}
@@ -1310,7 +1337,7 @@ func sendFinalEmail(ctx context.Context, gmailSvc *gmail.Service, fromEmail, toE
 	if emailThreadID != "" {
 		msg.ThreadId = emailThreadID
 	}
-	
+
 	emailThreadMu.Unlock()
 
 	var resp *gmail.Message
