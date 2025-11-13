@@ -1,0 +1,74 @@
+# Binaries
+*.exe
+gdrive-migrate
+gdrive-migrate.exe
+
+# Build output
+/bin/
+/build/
+/dist/
+
+# Go test/build artifacts
+*.test
+*.out
+
+# Vendor (if used)
+/vendor/
+
+# Logs and runtime state
+/logs/
+*.log
+/state/
+
+# SQLite DB used for checkpoints
+state/*.db
+
+# Credentials, tokens and secrets
+# Keep credentials out of VCS — these are sensitive and environment-specific
+creds*.json
+*token*.json
+dst_token.json
+src_token.json
+client_secret*.json
+creds_src.json
+creds_dst.json
+creds_src_oauth.json
+creds_dst_oauth.json
+state/creds/
+
+# Archives and packages
+*.zip
+*.tar.gz
+gdrive-migrate-*.tar.gz
+gdrive-migrate-*.zip
+
+# Docker / Compose local overrides and env files
+docker-compose.override.yml
+.env
+.env.*
+
+# IDE / editor
+.vscode/
+.idea/
+*.suo
+*.user
+*.swp
+Thumbs.db
+.DS_Store
+
+# Windows specific
+ehthumbs.db
+Icon?
+
+# Optional: keep a .gitkeep if you want to preserve empty dirs
+# !logs/.gitkeep
+# !state/.gitkeep
+
+# Personal scripts (private helpers, keys, credentials may be embedded)
+# Ignore shell and PowerShell helpers; put shared scripts in a 'scripts/' folder
+*.ps1
+*.sh
+upload-*.ps1
+upload-*.sh
+scripts/
+migrated_old.go

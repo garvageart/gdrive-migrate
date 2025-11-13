@@ -1,0 +1,24 @@
+version: "3.8"
+services:
+  gdrive-migrate:
+    build: .
+    image: gdrive-migrate:latest
+    # Use a neutral working dir inside the container; mount host folders into
+    # the container paths below. Replace HOST_STATE/HOST_LOGS with absolute
+    # host paths in your environment or rely on the defaults which are
+    # repository-relative (./state and ./logs).
+    working_dir: /app
+    environment:
+      # Optional: set APP_HOME in the container if your runtime relies on it.
+      - APP_HOME=/app
+    volumes:
+      # Host state dir (checkpoint DB, tokens). Default: ./state
+      - ${HOST_STATE:-./state}:/app/state:rw
+      # Credentials subdir inside state (optional explicit mount)
+      - ${HOST_STATE_CREDS:-./state/creds}:/app/state/creds:rw
+      # Logs directory. Default: ./logs
+      - ${HOST_LOGS:-./logs}:/app/logs:rw
+    # override command to pass runtime flags (example in README)
+    # To run with flags, use: docker compose run --rm gdrive-migrate -start-path "..."
+    command: ["-dry-run"]
+    restart: "no"
