@@ -231,6 +231,9 @@ func main() {
 
 			if resolvedPath != "" {
 				logger.Printf("resolved folder link to start-path: %s", resolvedPath)
+				resolvedPath = strings.TrimPrefix(resolvedPath, "My Drive")
+				resolvedPath = strings.TrimPrefix(resolvedPath, "/")
+				resolvedPath = strings.TrimPrefix(resolvedPath, "root/")
 				startPath = resolvedPath
 			}
 
